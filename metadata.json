@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Video Translator",
+  "description": "A powerful video translation tool using Gemini 2.5 Flash for transcription and translation, and Gemini TTS for voice generation.",
+  "requestFramePermissions": []
+}
