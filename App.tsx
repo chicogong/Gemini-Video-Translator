@@ -1,11 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileVideo, Languages, Loader2, Download, Globe } from './components/Icons';
+import { Upload, FileVideo, Languages, Loader2, Download, Globe, Play } from './components/Icons';
 import { Button } from './components/Button';
 import { AudioPlayer } from './components/AudioPlayer';
 import { TranslationStatus, AnalysisResult, LANGUAGES, LanguageOption } from './types';
 import { analyzeAndTranslateVideo, generateSpeech } from './services/gemini';
 
 const MAX_FILE_SIZE_MB = 15;
+
+const SAMPLE_VIDEOS = [
+  {
+    name: 'Google Fiber (15s)',
+    url: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    filename: 'sample_fiber.mp4'
+  },
+  {
+    name: 'Joyride (15s)',
+    url: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
+    filename: 'sample_joyride.mp4'
+  }
+];
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<TranslationStatus>(TranslationStatus.IDLE);
@@ -16,6 +29,7 @@ const App: React.FC = () => {
   const [generatedAudioBase64, setGeneratedAudioBase64] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [progressMessage, setProgressMessage] = useState<string>("");
+  const [isDownloadingSample, setIsDownloadingSample] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -27,21 +41,51 @@ const App: React.FC = () => {
     };
   }, [videoUrl]);
 
+  const resetState = () => {
+    setVideoFile(null);
+    if (videoUrl) URL.revokeObjectURL(videoUrl);
+    setVideoUrl(null);
+    setAnalysisResult(null);
+    setGeneratedAudioBase64(null);
+    setStatus(TranslationStatus.IDLE);
+    setErrorMsg(null);
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    loadVideoFile(file);
+  };
 
+  const loadVideoFile = (file: File) => {
     if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
       setErrorMsg(`File too large. Please select a video under ${MAX_FILE_SIZE_MB}MB.`);
       return;
     }
 
+    resetState();
     setVideoFile(file);
     setVideoUrl(URL.createObjectURL(file));
-    setAnalysisResult(null);
-    setGeneratedAudioBase64(null);
-    setStatus(TranslationStatus.IDLE);
-    setErrorMsg(null);
+  };
+
+  const handleSampleSelect = async (sample: typeof SAMPLE_VIDEOS[0]) => {
+    try {
+      setIsDownloadingSample(true);
+      setErrorMsg(null);
+      
+      const response = await fetch(sample.url);
+      if (!response.ok) throw new Error("Failed to fetch sample video");
+      
+      const blob = await response.blob();
+      const file = new File([blob], sample.filename, { type: 'video/mp4' });
+      
+      loadVideoFile(file);
+    } catch (err) {
+      console.error(err);
+      setErrorMsg("Could not load sample video. Often due to CORS restrictions or network issues.");
+    } finally {
+      setIsDownloadingSample(false);
+    }
   };
 
   const fileToBase64 = (file: File): Promise<string> => {
@@ -74,6 +118,10 @@ const App: React.FC = () => {
       const result = await analyzeAndTranslateVideo(base64Video, videoFile.type, targetLang.name);
       setAnalysisResult(result);
       
+      if (!result.segments || result.segments.length === 0) {
+        throw new Error("No speech detected in this video to translate.");
+      }
+
       // Combine all translated segments for TTS
       // In a real app, we might generate TTS per segment to sync. 
       // For this demo, we generate one continuous stream.
@@ -95,12 +143,9 @@ const App: React.FC = () => {
   };
 
   const resetApp = () => {
-    setVideoFile(null);
-    setVideoUrl(null);
-    setAnalysisResult(null);
-    setGeneratedAudioBase64(null);
-    setStatus(TranslationStatus.IDLE);
-    setErrorMsg(null);
+    resetState();
+    // Clear input value so same file can be selected again if needed
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
@@ -126,7 +171,8 @@ const App: React.FC = () => {
         {!videoFile && (
           <div className="flex-1 flex flex-col items-center justify-center min-h-[50vh]">
             <div className="max-w-md w-full text-center space-y-6">
-              <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+              
+              <div className="relative group cursor-pointer" onClick={() => !isDownloadingSample && fileInputRef.current?.click()}>
                 <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl blur opacity-30 group-hover:opacity-60 transition duration-500"></div>
                 <div className="relative bg-slate-800 border-2 border-dashed border-slate-600 rounded-2xl p-12 hover:border-blue-500 transition-colors flex flex-col items-center gap-4">
                   <div className="bg-slate-700 p-4 rounded-full">
@@ -139,6 +185,25 @@ const App: React.FC = () => {
                   <Button variant="outline" className="mt-2">Select File</Button>
                 </div>
               </div>
+
+              {/* Sample Videos Section */}
+              <div className="pt-6 border-t border-slate-800 w-full">
+                <p className="text-slate-400 text-sm mb-4">Or try a sample video:</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {SAMPLE_VIDEOS.map((sample, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleSampleSelect(sample)}
+                      disabled={isDownloadingSample}
+                      className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isDownloadingSample ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} className="text-emerald-400" />}
+                      {sample.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <input 
                 type="file" 
                 ref={fileInputRef} 
@@ -174,7 +239,8 @@ const App: React.FC = () => {
                   className="absolute top-4 right-4 bg-black/60 hover:bg-black/80 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                   title="Remove video"
                 >
-                  X
+                  <span className="sr-only">Close</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
               </div>
 
@@ -251,19 +317,25 @@ const App: React.FC = () => {
                     </div>
                     
                     <div className="overflow-y-auto p-0 flex-1 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent">
-                      <div className="divide-y divide-slate-700/50">
-                        {analysisResult.segments.map((segment, idx) => (
-                          <div key={idx} className="p-4 hover:bg-slate-700/30 transition-colors group">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs font-mono text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded">
-                                {segment.start} - {segment.end}
-                              </span>
+                      {analysisResult.segments.length > 0 ? (
+                        <div className="divide-y divide-slate-700/50">
+                          {analysisResult.segments.map((segment, idx) => (
+                            <div key={idx} className="p-4 hover:bg-slate-700/30 transition-colors group">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-mono text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded">
+                                  {segment.start} - {segment.end}
+                                </span>
+                              </div>
+                              <p className="text-slate-400 text-sm mb-1">{segment.original}</p>
+                              <p className="text-emerald-300 font-medium">{segment.translated}</p>
                             </div>
-                            <p className="text-slate-400 text-sm mb-1">{segment.original}</p>
-                            <p className="text-emerald-300 font-medium">{segment.translated}</p>
-                          </div>
-                        ))}
-                      </div>
+                          ))}
+                        </div>
+                      ) : (
+                         <div className="p-8 text-center text-slate-500">
+                           No spoken segments detected.
+                         </div>
+                      )}
                     </div>
                  </div>
                ) : (
